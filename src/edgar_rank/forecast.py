@@ -12,9 +12,14 @@ FEATURES = ["roa", "gross_profitability", "op_margin", "fcf_margin", "accruals",
 
 def add_target_and_features(df: pd.DataFrame) -> pd.DataFrame:
     d = df.sort_values(["cik", "fiscal_year"]).copy()
-    d["op_roa"] = d["op_income"] / d["avg_assets"]
-    d["accruals"] = (d["net_income"] - d["cfo"]) / d["avg_assets"]
-    d["asset_growth"] = d["assets"] / d["assets_lag"] - 1
+    # Guard denominators: zero or negative asset bases would create infinities,
+    # which silently break the quantile clipping and standardization downstream.
+    avg_assets = d["avg_assets"].where(d["avg_assets"] > 0)
+    d["op_roa"] = d["op_income"] / avg_assets
+    d["accruals"] = (d["net_income"] - d["cfo"]) / avg_assets
+    d["asset_growth"] = d["assets"] / d["assets_lag"].where(d["assets_lag"] > 0) - 1
+    ratio_cols = ["op_roa", "accruals", "asset_growth"]
+    d[ratio_cols] = d[ratio_cols].replace([np.inf, -np.inf], np.nan)
     nxt = d.groupby("cik")["op_roa"].shift(-1)
     nxt_fy = d.groupby("cik")["fiscal_year"].shift(-1)
     d["target_next_op_roa"] = nxt.where(nxt_fy - d["fiscal_year"] == 1)

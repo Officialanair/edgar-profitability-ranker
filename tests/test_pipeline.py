@@ -103,3 +103,11 @@ def test_usable_years_drops_early_and_partial_years():
     df = df[~((df["fiscal_year"] == 2022) & (df["cik"] > 10))]
     years = cli.usable_years(df, min_year=2010)
     assert 2009 not in years and 2022 not in years and 2015 in years
+
+
+def test_zero_assets_do_not_create_infinities():
+    panel = synthetic_panel(n_companies=60)
+    panel.loc[(panel["cik"] == 5) & (panel["fiscal_year"] == 2015), "assets"] = 0.0
+    df = forecast.add_target_and_features(metrics.add_metrics(panel))
+    cols = ["op_roa", "accruals", "asset_growth", "target_next_op_roa"]
+    assert not np.isinf(df[cols].to_numpy(dtype=float)).any()
