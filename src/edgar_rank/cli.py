@@ -4,13 +4,14 @@
     python -m edgar_rank.cli rank --alpha 0.5       # score and rank each fiscal year
 """
 import argparse
+import random
 
 import pandas as pd
 
 from . import config, edgar, extract, forecast, metrics
 
 
-def build(limit: int | None, cik_file: str | None) -> None:
+def build(limit: int | None, cik_file: str | None, seed: int = 0) -> None:
     session = edgar._session()
     if cik_file:
         ciks = [int(x) for x in open(cik_file).read().split()]
@@ -19,7 +20,9 @@ def build(limit: int | None, cik_file: str | None) -> None:
         # survivors. Pass --cik-file with historical CIKs to fix that.
         ciks = sorted({v["cik_str"] for v in edgar.company_tickers(session).values()})
     if limit:
-        ciks = ciks[:limit]
+        # Random sample, not the first N. Low CIKs are the oldest registrants, so
+        # taking the first N would skew the sample toward legacy companies.
+        ciks = sorted(random.Random(seed).sample(ciks, min(limit, len(ciks))))
 
     frames = []
     for i, cik in enumerate(ciks, 1):
@@ -44,12 +47,32 @@ def build(limit: int | None, cik_file: str | None) -> None:
     print(f"wrote {len(out)} company-years for {out['cik'].nunique()} companies")
 
 
-def rank(alpha: float) -> None:
+def usable_years(df: pd.DataFrame, min_year: int, min_share: float = 0.5) -> list:
+    """Fiscal years to score: from min_year on, and with at least min_share of the
+    median year's company count. This drops XBRL-phase-in years and a partial
+    latest year, whose cross-section is not comparable."""
+    counts = df[df["fiscal_year"] >= min_year].groupby("fiscal_year")["cik"].nunique()
+    return counts[counts >= min_share * counts.median()].index.tolist()
+
+
+def rank(alpha: float, min_year: int = 2010) -> None:
     panel = pd.read_csv(config.OUT_DIR / "panel.csv", parse_dates=["period_end", "avail_date"])
-    panel["sic2"] = (panel["sic"] // 100).astype("Int64")
+    panel["sic"] = panel["sic"].astype("Int64")
+    panel["sic2"] = panel["sic"] // 100
     df = metrics.add_metrics(panel)
     df = forecast.add_target_and_features(df)
+    # Filter after lags and targets are built so early rows still feed later ones.
+    years = usable_years(df, min_year)
+    dropped = sorted(set(df["fiscal_year"].unique()) - set(years))
+    print(f"scoring fiscal years {min(years)} to {max(years)}; skipped {dropped}")
+    df = df[df["fiscal_year"].isin(years)].copy()
     df = metrics.rank_current(df)
+
+    unscored = df["current_score"].isna()
+    print(f"unscored company-years: {unscored.mean():.0%}. Missing share by field (scored vs unscored):")
+    fields = ["revenue", "gp_filled", "op_income", "net_income", "cfo", "assets"]
+    print(df.groupby(unscored)[fields].apply(lambda d: d.isna().mean().round(2)).T.rename(
+        columns={False: "scored", True: "unscored"}).to_string())
     df["projected_op_roa"] = forecast.shrinkage_forecast(df)
 
     # Replace the shrinkage baseline with the regression where enough history exists.
@@ -71,13 +94,15 @@ def main() -> None:
     b = sub.add_parser("build")
     b.add_argument("--limit", type=int)
     b.add_argument("--cik-file", help="text file of CIKs, whitespace separated")
+    b.add_argument("--seed", type=int, default=0, help="seed for the random sample used with --limit")
     r = sub.add_parser("rank")
     r.add_argument("--alpha", type=float, default=0.5, help="weight on current vs projected")
+    r.add_argument("--min-year", type=int, default=2010, help="first fiscal year to score")
     args = p.parse_args()
     if args.cmd == "build":
-        build(args.limit, args.cik_file)
+        build(args.limit, args.cik_file, args.seed)
     else:
-        rank(args.alpha)
+        rank(args.alpha, args.min_year)
 
 
 if __name__ == "__main__":

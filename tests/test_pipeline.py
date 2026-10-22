@@ -83,3 +83,23 @@ def test_regression_never_trains_on_future_years():
     poisoned.loc[poisoned["fiscal_year"] >= 2016, "target_next_op_roa"] = 99.0
     after = forecast.regression_forecast(poisoned, 2016)
     pd.testing.assert_series_equal(base, after)
+
+
+def test_include_assessed_tax_revenue_is_picked_up():
+    facts = fake_facts()
+    facts["facts"]["us-gaap"] = {
+        "RevenueFromContractWithCustomerIncludingAssessedTax": {"units": {"USD": [
+            {"val": 250, "start": "2023-01-01", "end": "2023-12-31", "filed": "2024-02-20", "form": "10-K"},
+        ]}},
+    }
+    panel = extract.annual_panel(facts)
+    assert panel.loc[0, "revenue"] == 250
+
+
+def test_usable_years_drops_early_and_partial_years():
+    from edgar_rank import cli
+    df = metrics.add_metrics(synthetic_panel(n_companies=100, years=range(2008, 2023)))
+    # make 2022 partial: keep only 10 companies
+    df = df[~((df["fiscal_year"] == 2022) & (df["cik"] > 10))]
+    years = cli.usable_years(df, min_year=2010)
+    assert 2009 not in years and 2022 not in years and 2015 in years

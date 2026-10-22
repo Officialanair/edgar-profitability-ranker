@@ -17,8 +17,8 @@ pip install -r requirements.txt
 export EDGAR_USER_AGENT="Your Name your.email@example.com"   # required by the SEC
 export PYTHONPATH=src
 
-python -m edgar_rank.cli build --limit 200    # start small, then drop --limit
-python -m edgar_rank.cli rank --alpha 0.5
+python -m edgar_rank.cli build --limit 200    # random sample (--seed N); drop --limit for everything
+python -m edgar_rank.cli rank --alpha 0.5     # scores 2010 onward; skips partial years (--min-year to change)
 pytest
 ```
 
