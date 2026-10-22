@@ -148,3 +148,15 @@ def test_min_metrics_two_scores_companies_with_fewer_metrics():
     df = metrics.add_metrics(panel)
     assert metrics.rank_current(df, min_metrics=3)["current_score"].isna().all()
     assert metrics.rank_current(df, min_metrics=2)["current_score"].notna().any()
+
+
+def test_equity_only_rows_are_dropped():
+    # A later 10-K lists opening equity for 2013, before the company had real data.
+    facts = fake_facts()
+    facts["facts"]["us-gaap"]["StockholdersEquity"] = {"units": {"USD": [
+        {"val": -120, "end": "2013-12-31", "filed": "2021-02-15", "form": "10-K"},
+        {"val": 200, "end": "2020-12-31", "filed": "2021-02-15", "form": "10-K"},
+    ]}}
+    panel = extract.annual_panel(facts)
+    assert panel["fiscal_year"].tolist() == [2020]
+    assert panel.loc[0, "equity"] == 200

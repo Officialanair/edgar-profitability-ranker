@@ -80,4 +80,10 @@ def annual_panel(facts_json: dict) -> pd.DataFrame:
     agg = {c: "last" for c in panel.columns if c != "fiscal_year"}
     agg["period_end"] = "max"
     agg["avail_date"] = "max"
-    return panel.groupby("fiscal_year", as_index=False).agg(agg)
+    panel = panel.groupby("fiscal_year", as_index=False).agg(agg)
+
+    # Later 10-Ks list opening equity balances for years before a company was
+    # public. Those create rows holding nothing but equity, which are not real
+    # fiscal years. Keep only rows with at least one income, cash flow or asset value.
+    real = [c for c in list(config.FLOW_TAGS) + ["assets"] if c in panel.columns]
+    return panel[panel[real].notna().any(axis=1)].reset_index(drop=True)
