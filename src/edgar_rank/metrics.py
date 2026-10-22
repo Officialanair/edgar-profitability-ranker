@@ -20,6 +20,11 @@ def add_metrics(panel: pd.DataFrame) -> pd.DataFrame:
         gp = gp.fillna(df["revenue"] - df["cogs"])
     df["gp_filled"] = gp
 
+    # Some companies never tag OperatingIncomeLoss. Fall back to revenue minus
+    # total costs and expenses when both are available.
+    if "costs_and_expenses" in df:
+        df["op_income"] = df["op_income"].fillna(df["revenue"] - df["costs_and_expenses"])
+
     bad_assets = ~(df["avg_assets"] > 0)
     rev_ok = df["revenue"] > 0
 
@@ -55,13 +60,13 @@ def composite_score(df: pd.DataFrame, group: str | None = None, min_metrics: int
     return score
 
 
-def rank_current(df: pd.DataFrame, min_group_size: int = 10) -> pd.DataFrame:
+def rank_current(df: pd.DataFrame, min_group_size: int = 10, min_metrics: int = 3) -> pd.DataFrame:
     """Adds current_score (whole universe) and current_score_industry (within
     2-digit SIC; falls back to the universe score for small industries)."""
     out = df.copy()
-    out["current_score"] = composite_score(out)
+    out["current_score"] = composite_score(out, min_metrics=min_metrics)
     if "sic2" in out:
-        ind = composite_score(out, group="sic2")
+        ind = composite_score(out, group="sic2", min_metrics=min_metrics)
         size = out.groupby(["fiscal_year", "sic2"])["cik"].transform("count")
         out["current_score_industry"] = ind.where(size >= min_group_size, out["current_score"])
     return out

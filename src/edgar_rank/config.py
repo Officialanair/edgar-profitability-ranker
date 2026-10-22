@@ -31,6 +31,7 @@ FLOW_TAGS = {
     "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"],
     "gross_profit": ["GrossProfit"],
     "op_income": ["OperatingIncomeLoss"],
+    "costs_and_expenses": ["CostsAndExpenses"],
     "net_income": ["NetIncomeLoss", "ProfitLoss"],
     "cfo": ["NetCashProvidedByUsedInOperatingActivities"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment"],

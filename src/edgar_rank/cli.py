@@ -55,7 +55,7 @@ def usable_years(df: pd.DataFrame, min_year: int, min_share: float = 0.5) -> lis
     return counts[counts >= min_share * counts.median()].index.tolist()
 
 
-def rank(alpha: float, min_year: int = 2010) -> None:
+def rank(alpha: float, min_year: int = 2010, min_metrics: int = 3) -> None:
     panel = pd.read_csv(config.OUT_DIR / "panel.csv", parse_dates=["period_end", "avail_date"])
     panel["sic"] = panel["sic"].astype("Int64")
     panel["sic2"] = panel["sic"] // 100
@@ -66,7 +66,7 @@ def rank(alpha: float, min_year: int = 2010) -> None:
     dropped = sorted(set(df["fiscal_year"].unique()) - set(years))
     print(f"scoring fiscal years {min(years)} to {max(years)}; skipped {dropped}")
     df = df[df["fiscal_year"].isin(years)].copy()
-    df = metrics.rank_current(df)
+    df = metrics.rank_current(df, min_metrics=min_metrics)
 
     unscored = df["current_score"].isna()
     print(f"unscored company-years: {unscored.mean():.0%}. Missing share by field (scored vs unscored):")
@@ -98,11 +98,13 @@ def main() -> None:
     r = sub.add_parser("rank")
     r.add_argument("--alpha", type=float, default=0.5, help="weight on current vs projected")
     r.add_argument("--min-year", type=int, default=2010, help="first fiscal year to score")
+    r.add_argument("--min-metrics", type=int, default=3,
+                   help="how many of the 4 profitability metrics a company-year needs to be scored")
     args = p.parse_args()
     if args.cmd == "build":
         build(args.limit, args.cik_file, args.seed)
     else:
-        rank(args.alpha, args.min_year)
+        rank(args.alpha, args.min_year, args.min_metrics)
 
 
 if __name__ == "__main__":

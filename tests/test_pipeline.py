@@ -111,3 +111,40 @@ def test_zero_assets_do_not_create_infinities():
     df = forecast.add_target_and_features(metrics.add_metrics(panel))
     cols = ["op_roa", "accruals", "asset_growth", "target_next_op_roa"]
     assert not np.isinf(df[cols].to_numpy(dtype=float)).any()
+
+
+def test_split_balance_sheet_date_is_collapsed_into_one_row():
+    # 52/53 week year: income statement ends 2020-12-31, balance sheet 2021-01-02.
+    facts = {
+        "cik": 7,
+        "facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                {"val": 100, "start": "2020-01-01", "end": "2020-12-31", "filed": "2021-02-15", "form": "10-K"},
+            ]}},
+            "Assets": {"units": {"USD": [
+                {"val": 500, "end": "2021-01-02", "filed": "2021-02-15", "form": "10-K"},
+            ]}},
+        }},
+    }
+    panel = extract.annual_panel(facts)
+    assert len(panel) == 1
+    assert panel.loc[0, "revenue"] == 100 and panel.loc[0, "assets"] == 500
+
+
+def test_operating_income_falls_back_to_revenue_minus_costs():
+    panel = synthetic_panel(n_companies=3, years=range(2018, 2021))
+    panel["costs_and_expenses"] = panel["revenue"] - panel["op_income"]
+    expected = panel["op_income"].copy()
+    panel["op_income"] = np.nan
+    out = metrics.add_metrics(panel)
+    np.testing.assert_allclose(out.sort_index()["op_income"].to_numpy(), expected.to_numpy())
+
+
+def test_min_metrics_two_scores_companies_with_fewer_metrics():
+    panel = synthetic_panel(n_companies=40, years=range(2015, 2019))
+    panel["gross_profit"] = np.nan
+    panel["cogs"] = np.nan      # no gross profit possible
+    panel["op_income"] = np.nan  # no operating margin possible
+    df = metrics.add_metrics(panel)
+    assert metrics.rank_current(df, min_metrics=3)["current_score"].isna().all()
+    assert metrics.rank_current(df, min_metrics=2)["current_score"].notna().any()

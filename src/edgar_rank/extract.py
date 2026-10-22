@@ -73,4 +73,11 @@ def annual_panel(facts_json: dict) -> pd.DataFrame:
     # (common for retailers) to the prior fiscal year.
     panel["fiscal_year"] = (panel["period_end"] - pd.Timedelta(days=31)).dt.year
     panel["cik"] = int(facts_json.get("cik", 0))
-    return panel.sort_values("period_end").drop_duplicates("fiscal_year", keep="last")
+    # Income-statement and balance-sheet dates can differ by a day or two (52/53
+    # week years), which splits one fiscal year into partial rows. Collapse rows
+    # that share a fiscal year, taking the last non-null value in each column.
+    panel = panel.sort_values("period_end")
+    agg = {c: "last" for c in panel.columns if c != "fiscal_year"}
+    agg["period_end"] = "max"
+    agg["avail_date"] = "max"
+    return panel.groupby("fiscal_year", as_index=False).agg(agg)
