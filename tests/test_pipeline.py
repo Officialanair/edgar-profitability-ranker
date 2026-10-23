@@ -58,19 +58,13 @@ def synthetic_panel(n_companies=120, years=range(2012, 2022), seed=0):
 
 
 def test_ranking_and_forecast_run_end_to_end():
-    df = metrics.add_metrics(synthetic_panel())
-    df = forecast.add_target_and_features(df)
-    df = metrics.rank_current(df)
-    assert df["current_score"].between(0, 1).all()
-    assert df["current_score_industry"].notna().any()
-
-    df["projected_op_roa"] = forecast.shrinkage_forecast(df)
-    pred = forecast.regression_forecast(df, 2018)
-    assert pred.notna().all()
-    df.loc[pred.index, "projected_op_roa"] = pred
-
-    out = forecast.blend_scores(df, alpha=0.5)
+    from edgar_rank import cli
+    out = cli.score_panel(synthetic_panel(), alpha=0.5, min_year=2010, verbose=False)
+    assert out["current_score"].between(0, 1).all()
+    assert out["current_score_industry"].notna().any()
+    assert out["reg_pred"].dropna().between(0, 1).all()
     one_year = out[out["fiscal_year"] == 2018]
+    assert one_year["projected_score"].notna().all()
     assert one_year["final_rank"].min() == 1
     assert one_year["final_rank"].is_unique
 
@@ -80,7 +74,7 @@ def test_regression_never_trains_on_future_years():
     # Corrupt every target from the predicted year onward; predictions must not change.
     base = forecast.regression_forecast(df, 2016)
     poisoned = df.copy()
-    poisoned.loc[poisoned["fiscal_year"] >= 2016, "target_next_op_roa"] = 99.0
+    poisoned.loc[poisoned["fiscal_year"] >= 2016, "target_next_rank"] = 99.0
     after = forecast.regression_forecast(poisoned, 2016)
     pd.testing.assert_series_equal(base, after)
 
@@ -160,3 +154,52 @@ def test_equity_only_rows_are_dropped():
     panel = extract.annual_panel(facts)
     assert panel["fiscal_year"].tolist() == [2020]
     assert panel.loc[0, "equity"] == 200
+
+
+def test_extreme_losers_do_not_distort_projections():
+    from edgar_rank import cli
+    normal = synthetic_panel(n_companies=100, seed=0)
+    # 30 pre-revenue style companies losing 20x their assets every year.
+    shell = synthetic_panel(n_companies=30, seed=1)
+    shell["cik"] += 1000
+    shell["op_income"] = -20 * shell["assets"]
+    shell["net_income"] = shell["op_income"]
+    shell["cfo"] = shell["op_income"] * 0.9
+    panel = pd.concat([normal, shell], ignore_index=True)
+    out = cli.score_panel(panel, min_year=2010, verbose=False)
+    last = out[(out["fiscal_year"] == 2021) & (out["cik"] < 1000)]
+    # Healthy companies must not be projected into losses just because shells exist.
+    assert (last["projected_op_roa"] > 0).mean() > 0.9
+    assert last["reg_pred"].between(0, 1).all()
+    ok = last.dropna(subset=["op_roa", "projected_score"])
+    assert ok["op_roa"].corr(ok["projected_score"], method="spearman") > 0.5
+
+
+def test_partial_latest_year_is_never_a_realized_target():
+    from edgar_rank import cli
+    panel = synthetic_panel(n_companies=100, years=range(2012, 2023))
+    panel = panel[~((panel["fiscal_year"] == 2022) & (panel["cik"] > 10))]  # partial 2022
+    out = cli.score_panel(panel, min_year=2010, verbose=False)
+    assert 2022 not in set(out["fiscal_year"])
+    assert out[out["fiscal_year"] == 2021]["target_next_rank"].isna().all()
+
+
+def test_rank_to_level_is_monotonic_within_a_year():
+    df = forecast.add_target_and_features(metrics.add_metrics(synthetic_panel(n_companies=60)))
+    one = df[df["fiscal_year"] == 2018].copy()
+    one["projected_score"] = np.linspace(0, 1, len(one))
+    lvl = forecast.rank_to_level(one)
+    assert lvl.is_monotonic_increasing and lvl.notna().all()
+
+
+def test_backtest_recognises_persistent_profitability():
+    from edgar_rank import backtest, cli
+    df = cli.score_panel(synthetic_panel(n_companies=120), min_year=2010, verbose=False)
+    bt = backtest.evaluate(df)
+    assert set(bt["predictor"]) == set(backtest.PREDICTORS)
+    # The last scored year has no realized next year, so it must not be evaluated.
+    assert bt["fiscal_year"].max() == df["fiscal_year"].max() - 1
+    summary = backtest.summarize(bt)
+    assert summary.loc["regression", "mean_spearman"] > 0.5
+    assert summary.loc["shrinkage", "mean_spearman"] > 0.5
+    assert (summary["mean_top_rank"] > 0.5).all()
